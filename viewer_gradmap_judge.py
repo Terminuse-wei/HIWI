@@ -4,14 +4,14 @@
 viewer_gradmap_judge.py
 """
 
-# ======= ✅ 修复 PyTorch 2.6 权重反序列化安全机制 =======
+# =======  Fix PyTorch 2.6 safe deserialization for weights =======
 from model_def import SmallCNN, ConvBNReLU
 import torch
 import torch.serialization
 from torch.nn.modules.container import Sequential
 from torch.nn import Conv2d, BatchNorm2d, Linear, Dropout2d, ReLU, MaxPool2d, AdaptiveAvgPool2d
 
-# ✅ 允许反序列化自定义类 + 常见基础层
+#  Allow deserialization of custom classes + common layers
 torch.serialization.add_safe_globals([
     SmallCNN,
     ConvBNReLU,
@@ -25,19 +25,19 @@ torch.serialization.add_safe_globals([
     AdaptiveAvgPool2d,
 ])
 
-# ======= 常规 import =======
+# ======= Regular imports =======
 import argparse, time, os
 import numpy as np
 import cv2
 import torch.nn.functional as F
 from torchvision import transforms as T
 
-# ============ UI 小工具 ============
+# ============ Small UI helpers ============
 def put_text(img, s, org, color=(0,255,0), scale=0.9, thick=2):
     cv2.putText(img, s, org, cv2.FONT_HERSHEY_SIMPLEX, scale, color, thick, cv2.LINE_AA)
 def clamp(v, lo, hi): return max(lo, min(hi, v))
 
-# ============ ROI 选择器 ============
+# ============ ROI selector ============
 class ROISelector:
     def __init__(self, win):
         self.win=win; self.dragging=False
@@ -71,7 +71,7 @@ class GradCAM:
         self.model = model.eval()
         self.target = self._get_module(model, target_layer_name)
         if self.target is None:
-            raise ValueError(f"找不到层: {target_layer_name}")
+            raise ValueError(f"Cannot find layer: {target_layer_name}")
         self.act=None; self.grad=None
         self.fh = self.target.register_forward_hook(self._fh)
         self.bh = self.target.register_full_backward_hook(self._bh)
@@ -98,18 +98,18 @@ class GradCAM:
         cam = F.interpolate(cam.unsqueeze(1), size=x.shape[-2:], mode="bilinear", align_corners=False).squeeze(1)
         return self._norm(cam[0].cpu().numpy())
 
-# ============ 加载整模型 + 自动元信息 ============
+# ============ Load full model + meta info ============
 def load_full_model(device, path="panel_cls_full.pt"):
     if not os.path.exists(path):
-        raise FileNotFoundError(f"未找到整模型文件：{path}")
+        raise FileNotFoundError(f"Full model file not found: {path}")
     import torch.serialization
-    from model_def import SmallCNN  # 🔥 确保导入模型定义
+    from model_def import SmallCNN  #  ensure model definition is imported
 
-    torch.serialization.add_safe_globals([SmallCNN])  # ✅ 允许加载 SmallCNN
+    torch.serialization.add_safe_globals([SmallCNN])  #  allow loading SmallCNN
     model = torch.load(path, map_location=device, weights_only=False)
     model.eval()
 
-    # 随模型保存的元信息（在训练端已经写入）
+    # Meta info saved with the model during training
     class_names  = getattr(model, "class_names", ["normal","network_failure"])
     normal_idx   = int(getattr(model, "normal_idx", 0))      # normal=0
     input_size   = int(getattr(model, "input_size", 224))
@@ -128,7 +128,7 @@ def load_full_model(device, path="panel_cls_full.pt"):
             "input_size": input_size, "mean": mean, "std": std, "target_layer": target_layer}
     return model, tfm, cam, normal_idx, meta
 
-# ============ 主程序 ============
+# ============ Main ============
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="panel_cls_full.pt")
@@ -155,7 +155,7 @@ def main():
     if not args.no_window:
         cv2.setMouseCallback(win, selector.on_mouse)
 
-    print("[INFO] 左键拖拽=设ROI，l=锁定/解锁，r=清空，o=Cam开关，+/-=阈值，q=退出")
+    print("[INFO] Left-drag=ROI, l=lock/unlock, r=reset, o=CAM on/off, +/-=threshold, q=quit")
     show_cam = args.overlay_cam
 
     while True:
@@ -176,7 +176,7 @@ def main():
         status_text = "NO ROI"
         color = (0,255,0)
         if roi_bgr is not None:
-            # ------------ ROI 尺寸与坐标（保持独立命名） ------------
+            # ------------ ROI size & coords (keep names independent) ------------
             rx0, ry0, rx1, ry1 = selector.roi
             Wroi = rx1 - rx0
             Hroi = ry1 - ry0
@@ -186,9 +186,9 @@ def main():
                 # OpenCV BGR -> RGB
                 rgb_full = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2RGB)
 
-                # ------------ 多尺度中心裁剪投票 ------------
+                # ------------ Multi-scale center crop voting ------------
                 cx, cy = Wroi // 2, Hroi // 2
-                scales = [1.00, 0.85, 0.70, 0.55, 0.45]  # 可再加 0.35 更激进
+                scales = [1.00, 0.85, 0.70, 0.55, 0.45]
                 best = {"p0": 0.0, "p1": 0.0, "pred": 0, "p_top": 0.0, "scale": 1.0}
                 best_x = None
 
@@ -199,7 +199,7 @@ def main():
                     cy0 = max(0, cy - hh // 2);
                     cy1 = min(Hroi, cy + hh // 2)
                     crop = rgb_full[cy0:cy1, cx0:cx1]
-                    if crop.size == 0:  # 保险
+                    if crop.size == 0:
                         continue
 
                     x = tfm(crop).unsqueeze(0).to(device)
@@ -210,23 +210,23 @@ def main():
                     pred_idx = int(np.argmax(prob));
                     p_top = float(prob[pred_idx])
 
-                    # 用最大 P1 做最终决策（想更稳可改为最大 p_top）
+                    # Use maximum P1 as final decision (you can switch to max p_top for a more conservative rule)
                     if p1 > best["p1"]:
                         best.update({"p0": p0, "p1": p1, "pred": pred_idx, "p_top": p_top, "scale": s})
                         best_x = x
 
-                # ---------- 最终结果 ----------
+                # ---------- Final result ----------
                 p0, p1 = best["p0"], best["p1"]
                 pred_idx, pred_p = best["pred"], best["p_top"]
                 is_normal = (pred_idx == normal_idx) and (pred_p >= args.normal_thr)
                 status_text = f"{'NORMAL' if is_normal else 'INVALID'}  P0={p0:.2f}  P1={p1:.2f}  top={pred_idx}@{pred_p:.2f}  thr={args.normal_thr:.2f}  s={best['scale']:.2f}"
                 color = (0, 255, 0) if is_normal else (0, 0, 255)
 
-                # ---------- 叠加 Grad-CAM（用 best_x） ----------
+                # ---------- Overlay Grad-CAM (using best_x) ----------
                 if show_cam and not args.no_window and best_x is not None:
                     heat = cam.generate(best_x, class_idx=pred_idx)  # HxW, [0,1]
-                    hm = (np.clip(heat, 0, 1) * 255).astype(np.uint8)  # 单通道
-                    hm = cv2.applyColorMap(hm, cv2.COLORMAP_JET)  # 变 3 通道
+                    hm = (np.clip(heat, 0, 1) * 255).astype(np.uint8)  # single channel
+                    hm = cv2.applyColorMap(hm, cv2.COLORMAP_JET)      # to 3 channels
                     hm = cv2.resize(hm, (Wroi, Hroi), interpolation=cv2.INTER_LINEAR)
 
                     roi_view = vis[ry0:ry1, rx0:rx1]
